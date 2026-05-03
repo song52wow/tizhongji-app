@@ -89,6 +89,17 @@ class _HistoryPageState extends State<HistoryPage> {
   Widget _buildRecordTile(WeightRecord record) {
     final date = DateTime.parse(record.date);
     final weekday = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][date.weekday - 1];
+    // 在 v2 中，record 是单个 period，需要找同日期的另一条
+    final sameDateRecords = _records.where((r) => r.date == record.date).toList();
+    final hasMorning = sameDateRecords.any((r) => r.period == WeightPeriod.morning);
+    final hasEvening = sameDateRecords.any((r) => r.period == WeightPeriod.evening);
+    final morningWeight = hasMorning ? sameDateRecords.firstWhere((r) => r.period == WeightPeriod.morning).weight : null;
+    final eveningWeight = hasEvening ? sameDateRecords.firstWhere((r) => r.period == WeightPeriod.evening).weight : null;
+
+    // 只显示一次（当是 morning 时，或没有 morning 时）
+    if (record.period == WeightPeriod.evening && hasMorning) {
+      return const SizedBox.shrink();
+    }
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -102,9 +113,9 @@ class _HistoryPageState extends State<HistoryPage> {
         ),
         title: Row(
           children: [
-            _weightChip('晨', record.morningWeight),
+            _weightChip('晨', morningWeight),
             const SizedBox(width: 8),
-            _weightChip('晚', record.eveningWeight),
+            _weightChip('晚', eveningWeight),
           ],
         ),
         subtitle: record.note != null && record.note!.isNotEmpty

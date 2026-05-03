@@ -17,11 +17,11 @@ class RecordPage extends StatefulWidget {
 
 class _RecordPageState extends State<RecordPage> {
   final WeightApiService _apiService = WeightApiService();
-  final TextEditingController _morningController = TextEditingController();
-  final TextEditingController _eveningController = TextEditingController();
+  final TextEditingController _weightController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
 
   late DateTime _selectedDate;
+  WeightPeriod _selectedPeriod = WeightPeriod.morning;
   WeightRecord? _existingRecord;
   bool _loading = true;
   bool _saving = false;
@@ -37,21 +37,24 @@ class _RecordPageState extends State<RecordPage> {
   }
 
   Future<void> _loadExistingRecord() async {
-    if (widget.initialDate == null) {
-      setState(() => _loading = false);
-      return;
-    }
+    setState(() => _loading = true);
     try {
       final records = await _apiService.getWeightRecords(
         userId: widget.userId,
-        startDate: widget.initialDate!,
-        endDate: widget.initialDate!,
+        startDate: DateFormat('yyyy-MM-dd').format(_selectedDate),
+        endDate: DateFormat('yyyy-MM-dd').format(_selectedDate),
+        period: _selectedPeriod == WeightPeriod.evening ? 'evening' : 'morning',
+        pageSize: 1,
       );
       if (records.isNotEmpty) {
         _existingRecord = records.first;
-        _morningController.text = _existingRecord?.morningWeight?.toStringAsFixed(1) ?? '';
-        _eveningController.text = _existingRecord?.eveningWeight?.toStringAsFixed(1) ?? '';
-        _noteController.text = _existingRecord?.note ?? '';
+        _weightController.text = _existingRecord!.weight.toStringAsFixed(1);
+        _noteController.text = _existingRecord!.note ?? '';
+        _selectedPeriod = _existingRecord!.period;
+      } else {
+        _existingRecord = null;
+        _weightController.clear();
+        _noteController.clear();
       }
     } catch (_) {}
     setState(() => _loading = false);
@@ -68,8 +71,7 @@ class _RecordPageState extends State<RecordPage> {
       setState(() {
         _selectedDate = picked;
         _existingRecord = null;
-        _morningController.clear();
-        _eveningController.clear();
+        _weightController.clear();
         _noteController.clear();
         _loading = true;
       });
@@ -78,41 +80,25 @@ class _RecordPageState extends State<RecordPage> {
   }
 
   Future<void> _save() async {
-    final morningText = _morningController.text.trim();
-    final eveningText = _eveningController.text.trim();
+    final weightText = _weightController.text.trim();
     final note = _noteController.text.trim();
 
-    double? morningWeight;
-    double? eveningWeight;
-
-    if (morningText.isNotEmpty) {
-      morningWeight = double.tryParse(morningText);
-      if (morningWeight == null) {
-        setState(() => _errorMsg = '晨重数值格式不正确');
-        return;
-      }
-    }
-    if (eveningText.isNotEmpty) {
-      eveningWeight = double.tryParse(eveningText);
-      if (eveningWeight == null) {
-        setState(() => _errorMsg = '晚重数值格式不正确');
-        return;
-      }
-    }
-
-    if (morningWeight == null && eveningWeight == null && note.isEmpty) {
-      setState(() => _errorMsg = '请至少填写晨重、晚重或备注中的一项');
+    if (weightText.isEmpty) {
+      setState(() => _errorMsg = '请输入体重');
       return;
     }
 
-    if (morningWeight != null && (morningWeight < 20 || morningWeight > 300)) {
-      setState(() => _errorMsg = '晨重需在 20.0~300.0 kg 范围内');
+    final weight = double.tryParse(weightText);
+    if (weight == null) {
+      setState(() => _errorMsg = '体重数值格式不正确');
       return;
     }
-    if (eveningWeight != null && (eveningWeight < 20 || eveningWeight > 300)) {
-      setState(() => _errorMsg = '晚重需在 20.0~300.0 kg 范围内');
+
+    if (weight < 20 || weight > 300) {
+      setState(() => _errorMsg = '体重需在 20.0~300.0 kg 范围内');
       return;
     }
+
     if (note.length > 200) {
       setState(() => _errorMsg = '备注最多200字符');
       return;
@@ -127,8 +113,8 @@ class _RecordPageState extends State<RecordPage> {
       await _apiService.createWeightRecord(
         userId: widget.userId,
         date: DateFormat('yyyy-MM-dd').format(_selectedDate),
-        morningWeight: morningWeight,
-        eveningWeight: eveningWeight,
+        period: _selectedPeriod,
+        weight: weight,
         note: note.isEmpty ? null : note,
       );
       if (mounted) {
@@ -171,8 +157,7 @@ class _RecordPageState extends State<RecordPage> {
 
   @override
   void dispose() {
-    _morningController.dispose();
-    _eveningController.dispose();
+    _weightController.dispose();
     _noteController.dispose();
     super.dispose();
   }
@@ -181,7 +166,7 @@ class _RecordPageState extends State<RecordPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('体重记录'),
+        title: Text('体重记录 - ${_selectedPeriod == WeightPeriod.morning ? '早晨' : '晚上'}'),
         actions: [
           if (_existingRecord != null)
             IconButton(
@@ -206,31 +191,47 @@ class _RecordPageState extends State<RecordPage> {
                   ),
                   const Divider(),
                   const SizedBox(height: 16),
-                  Text('早晨体重', style: TextStyle(fontSize: 14, color: Colors.grey[700])),
+                  const Text('记录时段', style: TextStyle(fontSize: 14, color: Colors.grey)),
                   const SizedBox(height: 8),
-                  TextField(
-                    controller: _morningController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,1}')),
+                  SegmentedButton<WeightPeriod>(
+                    segments: const [
+                      ButtonSegment(
+                        value: WeightPeriod.morning,
+                        label: Text('早晨'),
+                        icon: Icon(Icons.wb_sunny_outlined),
+                      ),
+                      ButtonSegment(
+                        value: WeightPeriod.evening,
+                        label: Text('晚上'),
+                        icon: Icon(Icons.nightlight_outlined),
+                      ),
                     ],
-                    decoration: InputDecoration(
-                      hintText: '输入早晨体重',
-                      suffixText: widget.unit,
-                      border: const OutlineInputBorder(),
-                    ),
+                    selected: {_selectedPeriod},
+                    onSelectionChanged: (Set<WeightPeriod> selected) {
+                      setState(() {
+                        _selectedPeriod = selected.first;
+                        _existingRecord = null;
+                        _weightController.clear();
+                        _noteController.clear();
+                        _loading = true;
+                      });
+                      _loadExistingRecord();
+                    },
                   ),
                   const SizedBox(height: 16),
-                  Text('晚上体重', style: TextStyle(fontSize: 14, color: Colors.grey[700])),
+                  Text(
+                    _selectedPeriod == WeightPeriod.morning ? '早晨体重' : '晚上体重',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                  ),
                   const SizedBox(height: 8),
                   TextField(
-                    controller: _eveningController,
+                    controller: _weightController,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,1}')),
                     ],
                     decoration: InputDecoration(
-                      hintText: '输入晚上体重',
+                      hintText: '输入体重',
                       suffixText: widget.unit,
                       border: const OutlineInputBorder(),
                     ),
@@ -257,7 +258,9 @@ class _RecordPageState extends State<RecordPage> {
                     child: ElevatedButton(
                       onPressed: _saving ? null : _save,
                       style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-                      child: _saving ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('保存'),
+                      child: _saving
+                          ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                          : Text(_existingRecord == null ? '保存' : '更新'),
                     ),
                   ),
                 ],

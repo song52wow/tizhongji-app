@@ -39,6 +39,7 @@ class _HomePageState extends State<HomePage> {
         userId: widget.userId,
         startDate: _formatDate(_rangeStart),
         endDate: _formatDate(_rangeEnd),
+        pageSize: 200,
       );
       final stats = await _apiService.getWeightStats(
         userId: widget.userId,
@@ -57,10 +58,19 @@ class _HomePageState extends State<HomePage> {
 
   String _formatDate(DateTime date) => DateFormat('yyyy-MM-dd').format(date);
 
-  WeightRecord? get _todayRecord {
+  WeightRecord? get _todayMorningRecord {
     final today = _formatDate(DateTime.now());
     try {
-      return _records.firstWhere((r) => r.date == today);
+      return _records.firstWhere((r) => r.date == today && r.period == WeightPeriod.morning);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  WeightRecord? get _todayEveningRecord {
+    final today = _formatDate(DateTime.now());
+    try {
+      return _records.firstWhere((r) => r.date == today && r.period == WeightPeriod.evening);
     } catch (_) {
       return null;
     }
@@ -68,7 +78,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final today = _todayRecord;
+    final todayMorning = _todayMorningRecord;
+    final todayEvening = _todayEveningRecord;
 
     return Scaffold(
       appBar: AppBar(
@@ -92,7 +103,7 @@ class _HomePageState extends State<HomePage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  _buildTodaySection(today),
+                  _buildTodaySection(todayMorning, todayEvening),
                   const SizedBox(height: 16),
                   _buildChart(),
                   const SizedBox(height: 16),
@@ -103,7 +114,8 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildTodaySection(WeightRecord? today) {
+  Widget _buildTodaySection(WeightRecord? todayMorning, WeightRecord? todayEvening) {
+    final hasAny = todayMorning != null || todayEvening != null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -117,7 +129,7 @@ class _HomePageState extends State<HomePage> {
                 Expanded(
                   child: _buildTodayWeightTile(
                     '早晨体重',
-                    today?.morningWeight,
+                    todayMorning?.weight,
                     Icons.wb_sunny_outlined,
                   ),
                 ),
@@ -125,23 +137,27 @@ class _HomePageState extends State<HomePage> {
                 Expanded(
                   child: _buildTodayWeightTile(
                     '晚上体重',
-                    today?.eveningWeight,
+                    todayEvening?.weight,
                     Icons.nightlight_outlined,
                   ),
                 ),
               ],
             ),
-            if (today?.note != null && today!.note!.isNotEmpty) ...[
+            if (todayMorning?.note != null && todayMorning!.note!.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text(today.note!, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+              Text(todayMorning.note!, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+            ],
+            if (todayEvening?.note != null && todayEvening!.note!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(todayEvening.note!, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
             ],
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => _navigateToRecord(today?.date),
+                onPressed: () => _navigateToRecord(_formatDate(DateTime.now())),
                 icon: const Icon(Icons.edit),
-                label: Text(today == null ? '添加今日记录' : '编辑记录'),
+                label: Text(hasAny ? '编辑记录' : '添加今日记录'),
               ),
             ),
           ],
@@ -173,7 +189,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildChart() {
-    final hasData = _records.any((r) => r.morningWeight != null || r.eveningWeight != null);
+    final hasData = _records.isNotEmpty;
 
     return Card(
       child: Padding(
@@ -249,16 +265,22 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildLineChart() {
+    // 收集所有日期用于 X 轴
+    final dates = _records.map((r) => r.date).toSet().toList()..sort();
+    final dateIndex = <String, int>{};
+    for (int i = 0; i < dates.length; i++) {
+      dateIndex[dates[i]] = i;
+    }
+
     final morningSpots = <FlSpot>[];
     final eveningSpots = <FlSpot>[];
 
-    for (int i = 0; i < _records.length; i++) {
-      final r = _records[i];
-      if (r.morningWeight != null) {
-        morningSpots.add(FlSpot(i.toDouble(), r.morningWeight!));
-      }
-      if (r.eveningWeight != null) {
-        eveningSpots.add(FlSpot(i.toDouble(), r.eveningWeight!));
+    for (final r in _records) {
+      final x = (dateIndex[r.date] ?? 0).toDouble();
+      if (r.period == WeightPeriod.morning) {
+        morningSpots.add(FlSpot(x, r.weight));
+      } else {
+        eveningSpots.add(FlSpot(x, r.weight));
       }
     }
 
@@ -279,11 +301,11 @@ class _HomePageState extends State<HomePage> {
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              interval: (_records.length / 5).ceilToDouble().clamp(1, 10),
+              interval: (dates.length / 5).ceilToDouble().clamp(1, 10),
               getTitlesWidget: (value, meta) {
                 final idx = value.toInt();
-                if (idx >= 0 && idx < _records.length) {
-                  return Text(_records[idx].date.substring(5), style: const TextStyle(fontSize: 10));
+                if (idx >= 0 && idx < dates.length) {
+                  return Text(dates[idx].substring(5), style: const TextStyle(fontSize: 10));
                 }
                 return const SizedBox();
               },
@@ -323,19 +345,21 @@ class _HomePageState extends State<HomePage> {
             if (event is! FlLongPressStart) return;
             if (response == null || response.lineBarSpots == null || response.lineBarSpots!.isEmpty) return;
             final spot = response.lineBarSpots!.first;
-            final idx = spot.x.toInt();
-            if (idx >= 0 && idx < _records.length) {
-              _navigateToRecordWithLongPress(_records[idx].date);
+            final dateIdx = spot.x.toInt();
+            final dates = _records.map((r) => r.date).toSet().toList()..sort();
+            if (dateIdx >= 0 && dateIdx < dates.length) {
+              _navigateToRecordWithLongPress(dates[dateIdx]);
             }
           },
           touchTooltipData: LineTouchTooltipData(
             getTooltipItems: (spots) {
               return spots.map((spot) {
-                final idx = spot.x.toInt();
-                final record = idx < _records.length ? _records[idx] : null;
+                final dateIdx = spot.x.toInt();
+                final dates = _records.map((r) => r.date).toSet().toList()..sort();
+                final date = dateIdx < dates.length ? dates[dateIdx] : '';
                 final label = spot.barIndex == 0 ? '晨' : '晚';
                 return LineTooltipItem(
-                  '${record?.date ?? ''}\n$label: ${spot.y.toStringAsFixed(1)}${widget.unit}',
+                  '$date\n$label: ${spot.y.toStringAsFixed(1)}${widget.unit}',
                   const TextStyle(color: Colors.white, fontSize: 12),
                 );
               }).toList();
@@ -379,6 +403,8 @@ class _HomePageState extends State<HomePage> {
                 _statItem('最低体重', '${_stats!.minWeight?.toStringAsFixed(1) ?? '--'} ${widget.unit}'),
                 _statItem('最高体重', '${_stats!.maxWeight?.toStringAsFixed(1) ?? '--'} ${widget.unit}'),
                 _statItem('体重变化', '${(_stats!.change ?? 0) >= 0 ? '+' : ''}${( (_stats!.change ?? 0)).toStringAsFixed(1)} ${widget.unit}'),
+                if (_stats!.avgWeightDiff != null)
+                  _statItem('平均差值', '${(_stats!.avgWeightDiff ?? 0) >= 0 ? '+' : ''}${( _stats!.avgWeightDiff ?? 0).toStringAsFixed(1)} ${widget.unit}'),
               ],
             ),
           ],

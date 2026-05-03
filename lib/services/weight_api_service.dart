@@ -15,12 +15,14 @@ class WeightApiService {
     required String userId,
     String? startDate,
     String? endDate,
+    String? period,
     int page = 1,
     int pageSize = 100,
   }) async {
     final queryParams = {
       if (startDate != null) 'startDate': startDate,
       if (endDate != null) 'endDate': endDate,
+      if (period != null) 'period': period,
       'page': page.toString(),
       'pageSize': pageSize.toString(),
     };
@@ -40,8 +42,8 @@ class WeightApiService {
   Future<WeightRecord> createWeightRecord({
     required String userId,
     required String date,
-    double? morningWeight,
-    double? eveningWeight,
+    required WeightPeriod period,
+    required double weight,
     String? note,
   }) async {
     final uri = Uri.parse('$baseUrl/weight-records');
@@ -50,8 +52,8 @@ class WeightApiService {
       headers: _headers(userId),
       body: json.encode({
         'date': date,
-        if (morningWeight != null) 'morningWeight': morningWeight,
-        if (eveningWeight != null) 'eveningWeight': eveningWeight,
+        'period': period == WeightPeriod.evening ? 'evening' : 'morning',
+        'weight': weight,
         if (note != null) 'note': note,
       }),
     );
