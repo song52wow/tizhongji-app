@@ -1,0 +1,24 @@
+# Flutter
+.dart_tool/
+.idea/
+android/app/build/
+build/
+*.lock
+pubspec.lock
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+*.iml
+
+# macOS
+.DS_Store
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/app.flx
+ios/Flutter/app.zip
