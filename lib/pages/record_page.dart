@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/weight_record.dart';
 import '../services/weight_api_service.dart';
+import 'trend_page.dart';
+import 'history_page.dart';
 
 class RecordPage extends StatefulWidget {
   final String userId;
@@ -27,6 +29,13 @@ class _RecordPageState extends State<RecordPage> {
   bool _saving = false;
   String? _errorMsg;
 
+  static const _orangeActive = Color(0xFF9B4500);
+  static const _bluePrimary = Color(0xFF106399);
+  static const _textDark = Color(0xFF191C1D);
+  static const _textMuted = Color(0xFF41474F);
+  static const _bgGray = Color(0xFFEDEEEF);
+  static const _bgPage = Color(0xFFF8FAFC);
+
   @override
   void initState() {
     super.initState();
@@ -37,17 +46,20 @@ class _RecordPageState extends State<RecordPage> {
   }
 
   Future<void> _loadExistingRecord() async {
+    final expectedPeriod = _selectedPeriod;
     setState(() => _loading = true);
     try {
       final records = await _apiService.getWeightRecords(
         userId: widget.userId,
         startDate: DateFormat('yyyy-MM-dd').format(_selectedDate),
         endDate: DateFormat('yyyy-MM-dd').format(_selectedDate),
-        period: _selectedPeriod == WeightPeriod.evening ? 'evening' : 'morning',
-        pageSize: 1,
+        period: expectedPeriod == WeightPeriod.evening ? 'evening' : 'morning',
+        pageSize: 10,
       );
-      if (records.isNotEmpty) {
-        _existingRecord = records.first;
+      if (!mounted || expectedPeriod != _selectedPeriod) return;
+      final match = records.where((r) => r.period == expectedPeriod).toList();
+      if (match.isNotEmpty) {
+        _existingRecord = match.first;
         _weightController.text = _existingRecord!.weight.toStringAsFixed(1);
         _noteController.text = _existingRecord!.note ?? '';
         _selectedPeriod = _existingRecord!.period;
@@ -55,9 +67,18 @@ class _RecordPageState extends State<RecordPage> {
         _existingRecord = null;
         _weightController.clear();
         _noteController.clear();
+        _selectedPeriod = WeightPeriod.morning;
       }
-    } catch (_) {}
-    setState(() => _loading = false);
+    } catch (_) {
+      if (!mounted || expectedPeriod != _selectedPeriod) return;
+      _existingRecord = null;
+      _weightController.clear();
+      _noteController.clear();
+      _selectedPeriod = WeightPeriod.morning;
+    }
+    if (mounted) {
+      setState(() => _loading = false);
+    }
   }
 
   Future<void> _selectDate() async {
@@ -89,7 +110,7 @@ class _RecordPageState extends State<RecordPage> {
     }
 
     final weight = double.tryParse(weightText);
-    if (weight == null) {
+    if (weight == null || !weight.isFinite) {
       setState(() => _errorMsg = '体重数值格式不正确');
       return;
     }
@@ -128,33 +149,6 @@ class _RecordPageState extends State<RecordPage> {
     }
   }
 
-  Future<void> _delete() async {
-    if (_existingRecord == null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('确认删除'),
-        content: const Text('确定要删除这条体重记录吗？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      try {
-        await _apiService.deleteWeightRecord(_existingRecord!.id, widget.userId);
-        if (mounted) Navigator.pop(context, true);
-      } catch (_) {
-        setState(() => _errorMsg = '删除失败，请重试');
-      }
-    }
-  }
-
   @override
   void dispose() {
     _weightController.dispose();
@@ -162,110 +156,478 @@ class _RecordPageState extends State<RecordPage> {
     super.dispose();
   }
 
+  String get _dateDisplay {
+    final d = _selectedDate;
+    return '${d.day}/${d.month}/${d.year}';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _bgPage,
       appBar: AppBar(
-        title: Text('体重记录 - ${_selectedPeriod == WeightPeriod.morning ? '早晨' : '晚上'}'),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        shadowColor: Colors.black.withAlpha(13),
+        surfaceTintColor: Colors.transparent,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios, color: _textDark, size: 18),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          '体重管理',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w500,
+            color: _bluePrimary,
+          ),
+        ),
+        centerTitle: true,
         actions: [
-          if (_existingRecord != null)
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              onPressed: _delete,
-            ),
+          IconButton(
+            icon: const Icon(Icons.more_horiz, color: _textDark),
+            onPressed: () {},
+          ),
         ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16),
+          : SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.calendar_today),
-                    title: Text(DateFormat('yyyy年M月d日').format(_selectedDate)),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: _selectDate,
-                  ),
-                  const Divider(),
-                  const SizedBox(height: 16),
-                  const Text('记录时段', style: TextStyle(fontSize: 14, color: Colors.grey)),
-                  const SizedBox(height: 8),
-                  SegmentedButton<WeightPeriod>(
-                    segments: const [
-                      ButtonSegment(
-                        value: WeightPeriod.morning,
-                        label: Text('早晨'),
-                        icon: Icon(Icons.wb_sunny_outlined),
-                      ),
-                      ButtonSegment(
-                        value: WeightPeriod.evening,
-                        label: Text('晚上'),
-                        icon: Icon(Icons.nightlight_outlined),
-                      ),
-                    ],
-                    selected: {_selectedPeriod},
-                    onSelectionChanged: (Set<WeightPeriod> selected) {
-                      setState(() {
-                        _selectedPeriod = selected.first;
-                        _existingRecord = null;
-                        _weightController.clear();
-                        _noteController.clear();
-                        _loading = true;
-                      });
-                      _loadExistingRecord();
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    _selectedPeriod == WeightPeriod.morning ? '早晨体重' : '晚上体重',
-                    style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _weightController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,1}')),
-                    ],
-                    decoration: InputDecoration(
-                      hintText: '输入体重',
-                      suffixText: widget.unit,
-                      border: const OutlineInputBorder(),
+                  // Page Title
+                  const Text(
+                    '记录体重',
+                    style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.w500,
+                      color: _textDark,
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  Text('备注（可选）', style: TextStyle(fontSize: 14, color: Colors.grey[700])),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _noteController,
-                    maxLines: 3,
-                    maxLength: 200,
-                    decoration: const InputDecoration(
-                      hintText: '添加备注（最多200字符）',
-                      border: OutlineInputBorder(),
+                  const SizedBox(height: 40),
+
+                  // Input Card
+                  Container(
+                    padding: const EdgeInsets.all(25),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFC1C7D1).withAlpha(77)),
+                      boxShadow: const [
+                        BoxShadow(color: Color(0x145A9BD5), blurRadius: 12, offset: Offset(0, 4)),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        // Date Selector
+                        _buildDateSelector(),
+                        const SizedBox(height: 24),
+
+                        // Period Toggle
+                        _buildPeriodToggle(),
+                        const SizedBox(height: 24),
+
+                        // Weight Input
+                        _buildWeightInput(),
+                        const SizedBox(height: 24),
+
+                        // Note Textarea
+                        _buildNoteInput(),
+                      ],
                     ),
                   ),
+
+                  const SizedBox(height: 12),
+
+                  // Save Button
+                  GestureDetector(
+                    onTap: _saving ? null : _save,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        color: _bluePrimary,
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: const [
+                          BoxShadow(color: Color(0x33106999), blurRadius: 8, offset: Offset(0, 4)),
+                        ],
+                      ),
+                      child: Center(
+                        child: _saving
+                            ? const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.check, color: Colors.white, size: 18),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    '保存记录',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w500,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ),
+
                   if (_errorMsg != null) ...[
-                    const SizedBox(height: 8),
-                    Text(_errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 14)),
-                  ],
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _saving ? null : _save,
-                      style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-                      child: _saving
-                          ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                          : Text(_existingRecord == null ? '保存' : '更新'),
+                    const SizedBox(height: 12),
+                    Text(
+                      _errorMsg!,
+                      style: const TextStyle(color: Colors.red, fontSize: 14),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
+      bottomNavigationBar: _buildBottomNavBar(),
+    );
+  }
+
+  Widget _buildDateSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '日期',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: _textMuted,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 4),
+        GestureDetector(
+          onTap: _selectDate,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+            decoration: BoxDecoration(
+              color: _bgGray,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.calendar_today, size: 16, color: _textDark),
+                const SizedBox(width: 8),
+                Text(
+                  _dateDisplay,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: _textDark,
+                  ),
+                ),
+                const Spacer(),
+                const Icon(Icons.arrow_drop_down, color: _textDark),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPeriodToggle() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '时段',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: _textMuted,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: _bgGray,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => _changePeriod(WeightPeriod.morning),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _selectedPeriod == WeightPeriod.morning
+                          ? _orangeActive
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: _selectedPeriod == WeightPeriod.morning
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withAlpha(13),
+                                blurRadius: 1,
+                                offset: const Offset(0, 1),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.wb_sunny,
+                          size: 16.5,
+                          color: _selectedPeriod == WeightPeriod.morning
+                              ? Colors.white
+                              : _textMuted,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '早晨',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: _selectedPeriod == WeightPeriod.morning
+                                ? Colors.white
+                                : _textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => _changePeriod(WeightPeriod.evening),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _selectedPeriod == WeightPeriod.evening
+                          ? const Color(0xFF6042D6)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: _selectedPeriod == WeightPeriod.evening
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withAlpha(13),
+                                blurRadius: 1,
+                                offset: const Offset(0, 1),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.nightlight,
+                          size: 13.5,
+                          color: _selectedPeriod == WeightPeriod.evening
+                              ? Colors.white
+                              : _textMuted,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '晚上',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: _selectedPeriod == WeightPeriod.evening
+                                ? Colors.white
+                                : _textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _changePeriod(WeightPeriod period) {
+    if (_selectedPeriod == period) return;
+    setState(() {
+      _selectedPeriod = period;
+      _existingRecord = null;
+      _weightController.clear();
+      _noteController.clear();
+      _loading = true;
+    });
+    _loadExistingRecord();
+  }
+
+  Widget _buildWeightInput() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 42),
+          decoration: BoxDecoration(
+            color: _bgGray,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Center(
+            child: TextField(
+              controller: _weightController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 48,
+                fontWeight: FontWeight.w600,
+                color: _bluePrimary,
+                letterSpacing: -0.96,
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,1}')),
+              ],
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                hintText: '0.0',
+                hintStyle: TextStyle(
+                  fontSize: 48,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFC1C7D1),
+                  letterSpacing: -0.96,
+                ),
+                suffixText: 'kg',
+                suffixStyle: TextStyle(
+                  fontSize: 16,
+                  color: _textMuted,
+                ),
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ),
+        ),
+        if (_existingRecord != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            '已有记录，更新将覆盖',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildNoteInput() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '备注 (选填)',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: _textMuted,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          padding: const EdgeInsets.fromLTRB(13, 13, 13, 61),
+          decoration: BoxDecoration(
+            color: _bgGray,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: TextField(
+            controller: _noteController,
+            maxLines: null,
+            maxLength: 200,
+            style: const TextStyle(fontSize: 16, color: _textDark),
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              hintText: '添加记录备注...',
+              hintStyle: TextStyle(fontSize: 16, color: Color(0xFFC1C7D1)),
+              counterText: '',
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBottomNavBar() {
+    return Container(
+      height: 80,
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(230),
+        border: const Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+        boxShadow: const [
+          BoxShadow(color: Color(0x145A9BD5), blurRadius: 6, offset: Offset(0, -4)),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _navItem('总览', Icons.dashboard_outlined, false, 0),
+          _navItem('记录', Icons.edit_note, true, 1),
+          _navItem('趋势', Icons.show_chart, false, 2),
+          _navItem('动态', Icons.dynamic_feed, false, 3),
+        ],
+      ),
+    );
+  }
+
+  Widget _navItem(String label, IconData icon, bool isActive, int index) {
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          if (index == 1) return;
+          Navigator.pop(context);
+          if (index == 2) {
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => TrendPage(userId: widget.userId, unit: widget.unit),
+            ));
+          } else if (index == 3) {
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => HistoryPage(userId: widget.userId, unit: widget.unit),
+            ));
+          }
+        },
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: index == 1 ? 20 : 18,
+              color: isActive ? const Color(0xFF2563EB) : const Color(0xFF94A3B8),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: isActive ? const Color(0xFF2563EB) : const Color(0xFF94A3B8),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
