@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'pages/login_page.dart';
 import 'pages/home_page.dart';
 import 'services/settings_service.dart';
 import 'models/user_settings.dart';
@@ -13,26 +14,28 @@ class WeightTrackerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '体重记录',
+      title: '体重管理',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF106399)),
         useMaterial3: true,
       ),
-      home: const MainNavigation(),
+      home: const AuthGate(),
     );
   }
 }
 
-class MainNavigation extends StatefulWidget {
-  const MainNavigation({super.key});
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
 
   @override
-  State<MainNavigation> createState() => _MainNavigationState();
+  State<AuthGate> createState() => _AuthGateState();
 }
 
-class _MainNavigationState extends State<MainNavigation> {
+class _AuthGateState extends State<AuthGate> {
   final SettingsService _settingsService = SettingsService();
   UserSettings? _settings;
+  bool _loading = true;
 
   @override
   void initState() {
@@ -42,22 +45,28 @@ class _MainNavigationState extends State<MainNavigation> {
 
   Future<void> _loadSettings() async {
     final settings = await _settingsService.loadSettings();
-    setState(() => _settings = settings);
+    if (!mounted) return;
+    setState(() {
+      _settings = settings;
+      _loading = false;
+    });
   }
-
-  String get _userId => _settings?.id ?? 'default_user';
-  String get _unit => _settings?.unitLabel ?? 'kg';
 
   @override
   Widget build(BuildContext context) {
-    if (_settings == null) {
+    if (_loading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
       );
     }
 
-    return Scaffold(
-      body: HomePage(userId: _userId, unit: _unit),
-    );
+    // If user already has an ID stored, go directly to HomePage
+    if (_settings != null && _settings!.id.isNotEmpty && _settings!.id != 'default_user') {
+      return HomePage(userId: _settings!.id, unit: _settings!.unit);
+    }
+
+    return const LoginPage();
   }
 }

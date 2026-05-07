@@ -3,9 +3,13 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../models/weight_record.dart';
 import '../services/weight_api_service.dart';
+import '../utils/error_handler.dart';
+import '../utils/widgets.dart';
 import 'record_page.dart';
 import 'history_page.dart';
 import 'trend_page.dart';
+import 'notification_center_page.dart';
+import 'settings_page.dart';
 
 class HomePage extends StatefulWidget {
   final String userId;
@@ -21,6 +25,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   final WeightApiService _apiService = WeightApiService();
   List<WeightRecord> _records = [];
   bool _loading = true;
+  String? _errorMsg;
   DateTime _rangeStart = DateTime.now().subtract(const Duration(days: 7));
   final DateTime _rangeEnd = DateTime.now();
   late TabController _tabController;
@@ -39,7 +44,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   Future<void> _loadData() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _errorMsg = null;
+    });
     try {
       final records = await _apiService.getWeightRecords(
         userId: widget.userId,
@@ -47,12 +55,18 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         endDate: _formatDate(_rangeEnd),
         pageSize: 200,
       );
+      if (!mounted) return;
       setState(() {
         _records = records;
         _loading = false;
+        _errorMsg = null;
       });
     } catch (e) {
-      setState(() => _loading = false);
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _errorMsg = ErrorHandler.getErrorMessage(e);
+      });
     }
   }
 
@@ -98,6 +112,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
+      drawer: _buildDrawer(),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
@@ -106,18 +121,33 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.menu, color: Color(0xFF1E293B)),
-          onPressed: () {},
+          onPressed: () => _openDrawer(context),
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications_outlined, color: Color(0xFF1E293B)),
-            onPressed: () {},
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => NotificationCenterPage(
+                    userId: widget.userId,
+                    unit: widget.unit,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
+          ? const HomePageSkeleton()
+          : _errorMsg != null && _records.isEmpty
+              ? AppErrorState(
+                  message: _errorMsg!,
+                  onRetry: _loadData,
+                )
+              : SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -201,7 +231,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w600, color: Color(0xFF191C1D), letterSpacing: -0.96),
                   ),
                   const SizedBox(width: 4),
-                  const Text('kg', style: TextStyle(fontSize: 18, color: Color(0xFF41474F))),
+                  Text('${widget.unit}', style: const TextStyle(fontSize: 18, color: Color(0xFF41474F))),
                 ],
               ),
               const SizedBox(height: 12),
@@ -259,7 +289,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                         style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w600, color: Color(0xFF191C1D), letterSpacing: -0.96),
                       ),
                       const SizedBox(width: 4),
-                      const Text('kg', style: TextStyle(fontSize: 18, color: Color(0xFF41474F))),
+                      Text('${widget.unit}', style: const TextStyle(fontSize: 18, color: Color(0xFF41474F))),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -479,5 +509,98 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       ),
     );
     _loadData();
+  }
+
+  void _openDrawer(BuildContext context) {
+    Scaffold.of(context).openDrawer();
+  }
+
+  Widget _buildDrawer() {
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          DrawerHeader(
+            decoration: const BoxDecoration(
+              color: Color(0xFF106399),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.monitor_weight, size: 32, color: Colors.white),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '体重管理',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  'ID: ${widget.userId}',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.settings, color: Color(0xFF41474F)),
+            title: const Text('设置'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SettingsPage(userId: widget.userId),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.notifications_outlined, color: Color(0xFF41474F)),
+            title: const Text('通知中心'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => NotificationCenterPage(
+                    userId: widget.userId,
+                    unit: widget.unit,
+                  ),
+                ),
+              );
+            },
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.info_outline, color: Color(0xFF41474F)),
+            title: const Text('关于'),
+            onTap: () {
+              Navigator.pop(context);
+              showAboutDialog(
+                context: context,
+                applicationName: '体重管理',
+                applicationVersion: '1.0.0',
+                applicationLegalese: '© 2024 体重管理服务',
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 }

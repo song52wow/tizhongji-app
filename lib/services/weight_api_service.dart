@@ -1,14 +1,27 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart';
 import '../config/api_config.dart';
 import '../models/weight_record.dart';
 
 class WeightApiService {
   final String baseUrl = ApiConfig.baseUrl;
 
+  // 开发环境密钥，生产环境需从安全渠道获取
+  static const String _authSecret = 'dev-secret-change-in-production';
+
+  String _generateSignature(String userId) {
+    final key = utf8.encode(_authSecret);
+    final bytes = utf8.encode(userId);
+    final hmac = Hmac(sha256, key);
+    final digest = hmac.convert(bytes);
+    return digest.toString();
+  }
+
   Map<String, String> _headers(String userId) => {
     'Content-Type': 'application/json',
     'X-User-Id': userId,
+    'X-User-Signature': _generateSignature(userId),
   };
 
   Future<List<WeightRecord>> getWeightRecords({
@@ -35,7 +48,7 @@ class WeightApiService {
       final List<dynamic> items = data['items'] ?? [];
       return items.map((item) => WeightRecord.fromJson(item)).toList();
     } else {
-      throw Exception('获取体重记录失败');
+      throw Exception('获取体重记录失败 (${response.statusCode})');
     }
   }
 
@@ -59,10 +72,10 @@ class WeightApiService {
     );
 
     final data = json.decode(response.body);
-    if (response.statusCode == 200 && data['success'] != false) {
+    if (response.statusCode == 200) {
       return WeightRecord.fromJson(data);
     } else {
-      throw Exception(data['error'] ?? '创建失败');
+      throw Exception(data['error'] ?? '创建失败 (${response.statusCode})');
     }
   }
 

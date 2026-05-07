@@ -3,9 +3,12 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../models/weight_record.dart';
 import '../services/weight_api_service.dart';
+import '../utils/error_handler.dart';
+import '../utils/widgets.dart';
 import 'home_page.dart';
 import 'history_page.dart';
 import 'record_page.dart';
+import 'notification_center_page.dart';
 
 class TrendPage extends StatefulWidget {
   final String userId;
@@ -22,6 +25,7 @@ class _TrendPageState extends State<TrendPage> {
   List<WeightRecord> _records = [];
   WeightStats? _stats;
   bool _loading = true;
+  String? _errorMsg;
   DateTime _rangeStart = DateTime.now().subtract(const Duration(days: 7));
   DateTime _rangeEnd = DateTime.now();
   int _selectedRangeIndex = 0;
@@ -44,7 +48,10 @@ class _TrendPageState extends State<TrendPage> {
   }
 
   Future<void> _loadData() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _errorMsg = null;
+    });
     try {
       final records = await _apiService.getWeightRecords(
         userId: widget.userId,
@@ -52,18 +59,24 @@ class _TrendPageState extends State<TrendPage> {
         endDate: _formatDate(_rangeEnd),
         pageSize: 200,
       );
+      if (!mounted) return;
       final stats = await _apiService.getWeightStats(
         userId: widget.userId,
         startDate: _formatDate(_rangeStart),
         endDate: _formatDate(_rangeEnd),
       );
+      if (!mounted) return;
       setState(() {
         _records = records;
         _stats = stats;
         _loading = false;
       });
     } catch (e) {
-      setState(() => _loading = false);
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _errorMsg = ErrorHandler.getErrorMessage(e);
+      });
     }
   }
 
@@ -73,6 +86,7 @@ class _TrendPageState extends State<TrendPage> {
     final now = DateTime.now();
     setState(() {
       _selectedRangeIndex = index;
+      _errorMsg = null;
       switch (index) {
         case 0:
           _rangeStart = now.subtract(const Duration(days: 7));
@@ -117,13 +131,28 @@ class _TrendPageState extends State<TrendPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications_outlined, color: _textDark),
-            onPressed: () {},
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => NotificationCenterPage(
+                    userId: widget.userId,
+                    unit: widget.unit,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
+          ? const HomePageSkeleton()
+          : _errorMsg != null && _records.isEmpty
+              ? AppErrorState(
+                  message: _errorMsg!,
+                  onRetry: _loadData,
+                )
+              : SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -282,7 +311,7 @@ class _TrendPageState extends State<TrendPage> {
 
     if (morningRecords.isEmpty && eveningRecords.isEmpty) {
       return const Center(
-        child: Text('暂无数据', style: TextStyle(color: Colors.grey)),
+        child: Text('暂无数据，开始记录后趋势将在此展示', style: TextStyle(color: Colors.grey, fontSize: 14)),
       );
     }
 
@@ -320,7 +349,7 @@ class _TrendPageState extends State<TrendPage> {
                 final index = value.toInt();
                 if (index < 0) return const SizedBox();
                 if (morningRecords.isNotEmpty && index < morningRecords.length) {
-                  final date = DateTime.parse(morningRecords[index].date);
+                  final date = DateTime.tryParse(morningRecords[index].date) ?? DateTime.now();
                   return Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
@@ -509,7 +538,7 @@ class _TrendPageState extends State<TrendPage> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('kg', style: TextStyle(fontSize: 16, color: _textMuted)),
+              Text('${widget.unit}', style: const TextStyle(fontSize: 16, color: _textMuted)),
             ],
           ),
         ],
@@ -570,7 +599,7 @@ class _TrendPageState extends State<TrendPage> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('kg', style: TextStyle(fontSize: 16, color: _textMuted)),
+              Text('${widget.unit}', style: const TextStyle(fontSize: 16, color: _textMuted)),
             ],
           ),
         ],
@@ -705,13 +734,13 @@ class _TrendPageState extends State<TrendPage> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('kg', style: TextStyle(fontSize: 16, color: _textMuted)),
+              Text('${widget.unit}', style: const TextStyle(fontSize: 16, color: _textMuted)),
             ],
           ),
           if (minRecord != null) ...[
             const SizedBox(height: 4),
             Text(
-              '${DateFormat('M月d日').format(DateTime.parse(minRecord.date))} 记录',
+              '${DateFormat('M月d日').format(DateTime.tryParse(minRecord.date) ?? DateTime.now())} 记录',
               style: TextStyle(fontSize: 12, color: _textMuted.withAlpha(153)),
             ),
           ],
@@ -773,13 +802,13 @@ class _TrendPageState extends State<TrendPage> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('kg', style: TextStyle(fontSize: 16, color: _textMuted)),
+              Text('${widget.unit}', style: const TextStyle(fontSize: 16, color: _textMuted)),
             ],
           ),
           if (maxRecord != null) ...[
             const SizedBox(height: 4),
             Text(
-              '${DateFormat('M月d日').format(DateTime.parse(maxRecord.date))} 记录',
+              '${DateFormat('M月d日').format(DateTime.tryParse(maxRecord.date) ?? DateTime.now())} 记录',
               style: TextStyle(fontSize: 12, color: _textMuted.withAlpha(153)),
             ),
           ],
@@ -841,7 +870,7 @@ class _TrendPageState extends State<TrendPage> {
                 ),
               ),
               const SizedBox(width: 4),
-              const Text('kg', style: TextStyle(fontSize: 16, color: _textMuted)),
+              Text('${widget.unit}', style: const TextStyle(fontSize: 16, color: _textMuted)),
             ],
           ),
           const SizedBox(height: 4),

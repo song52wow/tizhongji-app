@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/weight_record.dart';
+import '../models/notification.dart';
 import '../services/weight_api_service.dart';
+import '../services/notification_api_service.dart';
+import '../utils/error_handler.dart';
+import '../utils/widgets.dart';
 import 'home_page.dart';
 import 'record_page.dart';
 import 'trend_page.dart';
+import 'notification_center_page.dart';
 
 class HistoryPage extends StatefulWidget {
   final String userId;
@@ -18,11 +23,19 @@ class HistoryPage extends StatefulWidget {
 
 class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStateMixin {
   final WeightApiService _apiService = WeightApiService();
+  final NotificationApiService _notifService = NotificationApiService();
   List<WeightRecord> _records = [];
+  List<AppNotification> _notifications = [];
   bool _loading = true;
+  String? _recordsErrorMsg;
+  bool _notifLoading = true;
   int _page = 1;
+  int _notifPage = 1;
   bool _hasMore = true;
+  bool _notifHasMore = true;
   final int _pageSize = 30;
+  final int _notifPageSize = 20;
+  int _unreadCount = 0;
   late TabController _tabController;
 
   static const _bluePrimary = Color(0xFF106399);
@@ -41,6 +54,7 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadRecords();
+    _loadNotifications();
   }
 
   @override
@@ -50,7 +64,10 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
   }
 
   Future<void> _loadRecords() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      if (_page == 1) _recordsErrorMsg = null;
+    });
     try {
       final records = await _apiService.getWeightRecords(
         userId: widget.userId,
@@ -65,9 +82,36 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
         }
         _hasMore = records.length >= _pageSize;
         _loading = false;
+        _recordsErrorMsg = null;
       });
     } catch (e) {
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _recordsErrorMsg = ErrorHandler.getErrorMessage(e);
+      });
+    }
+  }
+
+  Future<void> _loadNotifications() async {
+    setState(() => _notifLoading = true);
+    try {
+      final result = await _notifService.getNotifications(
+        userId: widget.userId,
+        page: _notifPage,
+        pageSize: _notifPageSize,
+      );
+      setState(() {
+        if (_notifPage == 1) {
+          _notifications = result.items;
+        } else {
+          _notifications.addAll(result.items);
+        }
+        _notifHasMore = result.items.length >= _notifPageSize;
+        _unreadCount = _notifications.where((n) => !n.isRead).length;
+        _notifLoading = false;
+      });
+    } catch (e) {
+      setState(() => _notifLoading = false);
     }
   }
 
@@ -75,6 +119,62 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
     if (_loading || !_hasMore) return;
     _page++;
     await _loadRecords();
+  }
+
+  Future<void> _loadMoreNotifications() async {
+    if (_notifLoading || !_notifHasMore) return;
+    _notifPage++;
+    await _loadNotifications();
+  }
+
+  Future<void> _markAllAsRead() async {
+    try {
+      await _notifService.markAllAsRead(widget.userId);
+      setState(() {
+        for (int i = 0; i < _notifications.length; i++) {
+          _notifications[i] = _notifications[i].copyWith(isRead: true);
+        }
+        _unreadCount = 0;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('操作失败：${ErrorHandler.getErrorMessage(e)}')),
+        );
+      }
+    }
+  }
+
+  Future<void> _markAsRead(AppNotification notification) async {
+    if (notification.isRead) return;
+    try {
+      await _notifService.markAsRead(notification.id, widget.userId);
+      setState(() {
+        final idx = _notifications.indexWhere((n) => n.id == notification.id);
+        if (idx != -1) {
+          _notifications[idx] = notification.copyWith(isRead: true);
+          _unreadCount = _unreadCount > 0 ? _unreadCount - 1 : 0;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _deleteNotification(AppNotification notification) async {
+    try {
+      await _notifService.deleteNotification(notification.id, widget.userId);
+      setState(() {
+        if (!notification.isRead) {
+          _unreadCount = _unreadCount > 0 ? _unreadCount - 1 : 0;
+        }
+        _notifications.removeWhere((n) => n.id == notification.id);
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('删除失败：${ErrorHandler.getErrorMessage(e)}')),
+        );
+      }
+    }
   }
 
   
@@ -97,9 +197,32 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
         ),
         centerTitle: true,
         actions: [
+          if (_unreadCount > 0)
+            Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _accentBlue.withAlpha(26),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '$_unreadCount条未读',
+                style: const TextStyle(fontSize: 12, color: _accentBlue),
+              ),
+            ),
           IconButton(
-            icon: const Icon(Icons.more_horiz, color: _textDark),
-            onPressed: () {},
+            icon: const Icon(Icons.notifications_outlined, color: _textDark),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => NotificationCenterPage(
+                    userId: widget.userId,
+                    unit: widget.unit,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -238,34 +361,68 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
   }
 
   Widget _buildHistoryTab() {
-    return _loading && _records.isEmpty
-        ? const Center(child: CircularProgressIndicator())
-        : _records.isEmpty
-            ? const Center(child: Text('暂无记录'))
-            : ListView.builder(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
-                itemCount: _records.length + (_hasMore ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (index == _records.length) {
-                    return Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Center(
-                        child: _loading
-                            ? const CircularProgressIndicator()
-                            : TextButton(
-                                onPressed: _loadMore,
-                                child: const Text('加载更多'),
-                              ),
-                      ),
-                    );
-                  }
-                  return _buildRecordItem(_records[index]);
-                },
-              );
+    if (_loading && _records.isEmpty) {
+      return const ListItemSkeleton();
+    }
+    if (_recordsErrorMsg != null && _records.isEmpty) {
+      return AppErrorState(
+        message: _recordsErrorMsg!,
+        onRetry: () {
+          setState(() => _page = 1);
+          _loadRecords();
+        },
+      );
+    }
+    if (_records.isEmpty) {
+      return const AppEmptyState(
+        title: '暂无记录',
+        subtitle: '开始记录您的第一条体重数据吧',
+        icon: Icons.monitor_weight_outlined,
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+      itemCount: _records.length + (_hasMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == _records.length) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: AppLoadingIndicator(size: 24),
+          );
+        }
+        return _buildRecordItem(_records[index]);
+      },
+    );
   }
 
+
+  Widget _buildNotificationsTab() {
+    if (_notifLoading && _notifications.isEmpty) {
+      return const NotificationItemSkeleton();
+    }
+    if (_notifications.isEmpty) {
+      return const AppEmptyState(
+        title: '暂无通知',
+        subtitle: '这里将显示您的所有通知',
+        icon: Icons.notifications_none,
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+      itemCount: _notifications.length + (_notifHasMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == _notifications.length) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: AppLoadingIndicator(size: 24),
+          );
+        }
+        return _buildNotificationItem(_notifications[index]);
+      },
+    );
+  }
   Widget _buildRecordItem(WeightRecord record) {
-    final date = DateTime.parse(record.date);
+    final date = DateTime.tryParse(record.date) ?? DateTime.now();
     final isMorning = record.period == WeightPeriod.morning;
 
     return GestureDetector(
@@ -276,6 +433,7 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
             builder: (_) => RecordPage(
               userId: widget.userId,
               initialDate: record.date,
+              initialPeriod: record.period,
               unit: widget.unit,
             ),
           ),
@@ -343,7 +501,7 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
                   ),
                 ),
                 Text(
-                  'kg',
+                  widget.unit,
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -358,20 +516,153 @@ class _HistoryPageState extends State<HistoryPage> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildNotificationsTab() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.notifications_outlined, size: 64, color: _textMuted.withAlpha(102)),
-          const SizedBox(height: 16),
-          Text(
-            '暂无通知',
-            style: TextStyle(fontSize: 16, color: _textMuted.withAlpha(153)),
+
+  Widget _buildNotificationItem(AppNotification notification) {
+    final typeColor = _getTypeColor(notification.type);
+    final isUnread = !notification.isRead;
+
+    return Dismissible(
+      key: Key(notification.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(
+          color: Colors.red,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      confirmDismiss: (_) async {
+        await _deleteNotification(notification);
+        return false;
+      },
+      child: GestureDetector(
+        onTap: () => _markAsRead(notification),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isUnread ? const Color(0xFFF0F7FF) : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isUnread ? _accentBlue.withAlpha(51) : _borderGray.withAlpha(128),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(isUnread ? 10 : 5),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-        ],
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: typeColor.withAlpha(26),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Icon(
+                  _getTypeIcon(notification.type),
+                  size: 18,
+                  color: typeColor,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        if (isUnread)
+                          Container(
+                            width: 8,
+                            height: 8,
+                            margin: const EdgeInsets.only(right: 6),
+                            decoration: const BoxDecoration(
+                              color: _accentBlue,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        Expanded(
+                          child: Text(
+                            notification.title,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: isUnread ? FontWeight.w600 : FontWeight.w500,
+                              color: _textDark,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          _formatTime(notification.createdAt),
+                          style: TextStyle(fontSize: 12, color: _textMuted.withAlpha(153)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      notification.content,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: _textMuted.withAlpha(179),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
+  }
+
+  Color _getTypeColor(NotificationType type) {
+    switch (type) {
+      case NotificationType.system:
+        return const Color(0xFF16A34A);
+      case NotificationType.order:
+        return const Color(0xFF2563EB);
+      case NotificationType.message:
+        return const Color(0xFF7C3AED);
+      case NotificationType.campaign:
+        return const Color(0xFFEA580C);
+    }
+  }
+
+  IconData _getTypeIcon(NotificationType type) {
+    switch (type) {
+      case NotificationType.system:
+        return Icons.settings;
+      case NotificationType.order:
+        return Icons.receipt_long;
+      case NotificationType.message:
+        return Icons.mail;
+      case NotificationType.campaign:
+        return Icons.campaign;
+    }
+  }
+
+  String _formatTime(String createdAt) {
+    final date = DateTime.tryParse(createdAt);
+    if (date == null) return '';
+    final now = DateTime.now();
+      final diff = now.difference(date);
+      if (diff.inMinutes < 1) return '刚刚';
+      if (diff.inHours < 1) return '${diff.inMinutes}分钟前';
+      if (diff.inHours < 24) return '${diff.inHours}小时前';
+      if (diff.inDays < 7) return '${diff.inDays}天前';
+      return DateFormat('M月d日').format(date);
   }
 
   Widget _buildBottomNavBar() {

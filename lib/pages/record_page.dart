@@ -3,15 +3,18 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/weight_record.dart';
 import '../services/weight_api_service.dart';
+import '../utils/error_handler.dart';
+import '../utils/widgets.dart';
 import 'trend_page.dart';
 import 'history_page.dart';
 
 class RecordPage extends StatefulWidget {
   final String userId;
   final String? initialDate;
+  final WeightPeriod? initialPeriod;
   final String unit;
 
-  RecordPage({super.key, required this.userId, this.initialDate, this.unit = 'kg'});
+  RecordPage({super.key, required this.userId, this.initialDate, this.initialPeriod, this.unit = 'kg'});
 
   @override
   State<RecordPage> createState() => _RecordPageState();
@@ -40,8 +43,11 @@ class _RecordPageState extends State<RecordPage> {
   void initState() {
     super.initState();
     _selectedDate = widget.initialDate != null
-        ? DateTime.parse(widget.initialDate!)
+        ? (DateTime.tryParse(widget.initialDate!) ?? DateTime.now())
         : DateTime.now();
+    if (widget.initialPeriod != null) {
+      _selectedPeriod = widget.initialPeriod!;
+    }
     _loadExistingRecord();
   }
 
@@ -67,14 +73,18 @@ class _RecordPageState extends State<RecordPage> {
         _existingRecord = null;
         _weightController.clear();
         _noteController.clear();
-        _selectedPeriod = WeightPeriod.morning;
+        // 保留用户当前选择的 _selectedPeriod
       }
-    } catch (_) {
+    } catch (e) {
       if (!mounted || expectedPeriod != _selectedPeriod) return;
       _existingRecord = null;
       _weightController.clear();
       _noteController.clear();
-      _selectedPeriod = WeightPeriod.morning;
+      if (mounted) {
+        setState(() {
+          _errorMsg = '加载已有记录失败：${ErrorHandler.getErrorMessage(e)}';
+        });
+      }
     }
     if (mounted) {
       setState(() => _loading = false);
@@ -115,7 +125,9 @@ class _RecordPageState extends State<RecordPage> {
       return;
     }
 
-    if (weight < 20 || weight > 300) {
+    // Convert to kg for validation and storage if unit is lb
+    double weightKg = widget.unit == 'lb' ? weight / 2.20462 : weight;
+    if (weightKg < 20 || weightKg > 300) {
       setState(() => _errorMsg = '体重需在 20.0~300.0 kg 范围内');
       return;
     }
@@ -135,7 +147,7 @@ class _RecordPageState extends State<RecordPage> {
         userId: widget.userId,
         date: DateFormat('yyyy-MM-dd').format(_selectedDate),
         period: _selectedPeriod,
-        weight: weight,
+        weight: weightKg,
         note: note.isEmpty ? null : note,
       );
       if (mounted) {
@@ -144,7 +156,7 @@ class _RecordPageState extends State<RecordPage> {
     } catch (e) {
       setState(() {
         _saving = false;
-        _errorMsg = '保存失败，请重试';
+        _errorMsg = '保存失败：${ErrorHandler.getErrorMessage(e)}';
       });
     }
   }
@@ -186,12 +198,12 @@ class _RecordPageState extends State<RecordPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.more_horiz, color: _textDark),
-            onPressed: () {},
+            onPressed: () => _showRecordOptions(context),
           ),
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppLoadingIndicator()
           : SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
               child: Column(
@@ -498,7 +510,7 @@ class _RecordPageState extends State<RecordPage> {
               inputFormatters: [
                 FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,1}')),
               ],
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 border: InputBorder.none,
                 hintText: '0.0',
                 hintStyle: TextStyle(
@@ -507,7 +519,7 @@ class _RecordPageState extends State<RecordPage> {
                   color: Color(0xFFC1C7D1),
                   letterSpacing: -0.96,
                 ),
-                suffixText: 'kg',
+                suffixText: '${widget.unit}',
                 suffixStyle: TextStyle(
                   fontSize: 16,
                   color: _textMuted,
@@ -530,6 +542,49 @@ class _RecordPageState extends State<RecordPage> {
         ],
       ],
     );
+  }
+
+  void _showRecordOptions(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_existingRecord != null)
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text('删除此记录', style: TextStyle(color: Colors.red)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _deleteRecord();
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.pop(context),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteRecord() async {
+    if (_existingRecord == null) return;
+    try {
+      await _apiService.deleteWeightRecord(_existingRecord!.id, widget.userId);
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('删除失败：${ErrorHandler.getErrorMessage(e)}')),
+        );
+      }
+    }
   }
 
   Widget _buildNoteInput() {
@@ -557,7 +612,7 @@ class _RecordPageState extends State<RecordPage> {
             maxLines: null,
             maxLength: 200,
             style: const TextStyle(fontSize: 16, color: _textDark),
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               border: InputBorder.none,
               hintText: '添加记录备注...',
               hintStyle: TextStyle(fontSize: 16, color: Color(0xFFC1C7D1)),

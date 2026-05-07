@@ -28,6 +28,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _loadSettings() async {
     final settings = await _settingsService.loadSettings();
+    if (!mounted) return;
     setState(() {
       _settings = settings;
       _targetWeightController.text = settings.targetWeightKg?.toStringAsFixed(1) ?? '';
@@ -256,10 +257,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   TimeOfDay _parseTime(String timeStr) {
-    final parts = timeStr.split(':');
-    return TimeOfDay(
-      hour: int.parse(parts[0]),
-      minute: int.parse(parts[1]),
-    );
+    try {
+      final parts = timeStr.split(':');
+      return TimeOfDay(
+        hour: int.parse(parts[0]),
+        minute: int.parse(parts[1]),
+      );
+    } catch (_) {
+      return const TimeOfDay(hour: 9, minute: 0);
+    }
   }
 }
