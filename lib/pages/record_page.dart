@@ -5,6 +5,7 @@ import '../models/weight_record.dart';
 import '../services/weight_api_service.dart';
 import '../utils/error_handler.dart';
 import '../utils/widgets.dart';
+import 'home_page.dart';
 import 'trend_page.dart';
 import 'history_page.dart';
 
@@ -150,10 +151,19 @@ class _RecordPageState extends State<RecordPage> {
         weight: weightKg,
         note: note.isEmpty ? null : note,
       );
-      if (mounted) {
-        Navigator.pop(context, true);
-      }
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('保存成功')),
+      );
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => HomePage(userId: widget.userId, unit: widget.unit),
+        ),
+        (route) => false,
+      );
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _saving = false;
         _errorMsg = '保存失败：${ErrorHandler.getErrorMessage(e)}';
